@@ -3,9 +3,13 @@ name: Large Repo Benchmark
 on:
   push:
     branches: ["main"]
+    paths:
+      - '!docs/**'
   pull_request:
     types: [opened, synchronize]
-
+    paths:
+      - '!docs/**'
+      
 jobs:
   build:
     name: Run Benchmarks
