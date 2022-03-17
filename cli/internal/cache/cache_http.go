@@ -43,13 +43,11 @@ var mtime = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 const nobody = 65534
 
 func (cache *httpCache) Put(target, hash string, duration int, files []string) error {
-	// if cache.writable {
 	cache.requestLimiter.acquire()
 	defer cache.requestLimiter.release()
-
-	r, w := io.Pipe()
-	go cache.write(w, hash, files)
-	return cache.config.ApiClient.PutArtifact(hash, duration, r)
+	reader, writer := io.Pipe()
+	go cache.write(writer, hash, files)
+	return cache.config.ApiClient.PutArtifact(hash, duration, reader)
 }
 
 // write writes a series of files into the given Writer.

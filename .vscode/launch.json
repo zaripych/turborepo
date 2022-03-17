@@ -21,6 +21,24 @@
       "program": "${workspaceRoot}/cli/cmd/turbo",
       "cwd": "${workspaceRoot}/examples/basic",
       "args": ["--version"]
+    },
+    {
+      "name": "Turbo Run Build All",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceRoot}/cli/cmd/turbo",
+      "cwd": "${workspaceRoot}",
+      "args": ["run", "build"]
+    },
+    {
+      "name": "Turbo Run Build All (Force)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceRoot}/cli/cmd/turbo",
+      "cwd": "${workspaceRoot}",
+      "args": ["run", "build", "--force"]
     }
   ]
 }

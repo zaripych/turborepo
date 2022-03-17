@@ -2,10 +2,13 @@ package client
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -132,7 +135,29 @@ func (c *ApiClient) UserAgent() string {
 	return fmt.Sprintf("turbo %v %v %v (%v)", c.turboVersion, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 }
 
-func (c *ApiClient) PutArtifact(hash string, duration int, rawBody interface{}) error {
+type CustomReader struct {
+	read  func([]byte) (int, error)
+	close func()
+}
+
+func (c CustomReader) Read(p []byte) (n int, err error) {
+	return c.read(p)
+}
+func (c CustomReader) Close() error {
+	c.close()
+	return nil
+}
+
+type HashReader struct {
+	io.Reader
+	hash.Hash
+}
+
+func NewHashReader(r io.Reader, h hash.Hash) HashReader {
+	return HashReader{io.TeeReader(r, h), h}
+}
+
+func (c *ApiClient) PutArtifact(hash string, duration int, rawBody io.Reader) error {
 	if err := c.okToRequest(); err != nil {
 		return err
 	}
@@ -143,7 +168,33 @@ func (c *ApiClient) PutArtifact(hash string, duration int, rawBody interface{}) 
 	if encoded != "" {
 		encoded = "?" + encoded
 	}
-	req, err := retryablehttp.NewRequest(http.MethodPut, c.makeUrl("/v8/artifacts/"+hash+encoded), rawBody)
+
+	// make sure that you update the checksum before you send EOF in the body.
+	// set "Md5-Checksum" as a key and nil as the value
+	trailerHeaders := http.Header{
+		"Content-MD5": nil,
+	}
+
+	hashReader := NewHashReader(rawBody, md5.New())
+
+	// make sure that you update the checksum before you send EOF in the body.
+	customReader := CustomReader{
+		read: func(p []byte) (n int, err error) {
+			if n, err = hashReader.Read(p); err != nil {
+				s := base64.StdEncoding.EncodeToString(hashReader.Sum(nil))
+				trailerHeaders["Content-MD5"] = []string{s}
+			}
+			return
+		},
+		close: func() {
+			fmt.Printf("trailerHeaders signature %v\n", trailerHeaders["Content-MD5"])
+		},
+	}
+
+	//body := ioutil.NopCloser(customReader)
+	// assert that body is a ReadCloser
+	var body io.ReadCloser = customReader
+	req, err := retryablehttp.NewRequest(http.MethodPut, c.makeUrl("/v8/artifacts/"+hash+encoded), body)
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("x-artifact-duration", fmt.Sprintf("%v", duration))
 	req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -151,6 +202,8 @@ func (c *ApiClient) PutArtifact(hash string, duration int, rawBody interface{}) 
 	if err != nil {
 		return fmt.Errorf("[WARNING] Invalid cache URL: %w", err)
 	}
+	req.Trailer = trailerHeaders
+
 	if resp, err := c.HttpClient.Do(req); err != nil {
 		return fmt.Errorf("failed to store files in HTTP cache: %w", err)
 	} else {
