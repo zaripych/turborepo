@@ -11,6 +11,8 @@
     "turbo": "./turbow.sh"
   },
   "devDependencies": {
+    "@types/find-down": "^0.1.1",
+    "@types/node": "^17.0.29",
     "lint-staged": "^12.3.2",
     "prettier": "^2.5.0",
     "simple-git-hooks": "^2.7.0"
@@ -26,5 +28,18 @@
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged"
   },
-  "packageManager": "pnpm@6.32.2"
+  "packageManager": "pnpm@6.32.2",
+  "dependencies": {
+    "exclude-match": "^1.0.7",
+    "find-down": "^0.1.4",
+    "finddown-sync": "^1.0.2",
+    "fs": "^0.0.1-security",
+    "glob": "^8.0.1",
+    "globby": "^11.0.0",
+    "is-directory": "^0.3.1",
+    "micromatch": "^4.0.5",
+    "path": "^0.12.7",
+    "resolve-dir": "^1.0.1",
+    "workspace-tools": "^0.18.4"
+  }
 }

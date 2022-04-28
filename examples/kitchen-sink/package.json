@@ -13,7 +13,11 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "devDependencies": {
+    "@types/node": "^17.0.29",
     "prettier": "^2.5.1",
     "turbo": "latest"
+  },
+  "dependencies": {
+    "workspace-tools": "^0.18.4"
   }
 }
