@@ -337,7 +337,7 @@ func (c *RunCommand) runOperation(g *completeGraph, rs *runSpec, packageManager 
 	} else {
 		packagesInScope := rs.FilteredPkgs.UnsafeListOfStrings()
 		sort.Strings(packagesInScope)
-		c.Ui.Output(fmt.Sprintf(ui.Dim("• Packages in scope: %v"), strings.Join(packagesInScope, ", ")))
+		// c.Ui.Output(fmt.Sprintf(ui.Dim("• Packages in scope: %v"), strings.Join(packagesInScope, ", ")))
 		if rs.Opts.stream {
 			c.Ui.Output(fmt.Sprintf("%s %s %s", ui.Dim("• Running"), ui.Dim(ui.Bold(strings.Join(rs.Targets, ", "))), ui.Dim(fmt.Sprintf("in %v packages", rs.FilteredPkgs.Len()))))
 		}
@@ -464,7 +464,7 @@ func getDefaultRunOptions() *RunOptions {
 		cache:               true,
 		profile:             "", // empty string does no tracing
 		forceExecution:      false,
-		stream:              true,
+		stream:              false,
 		only:                false,
 		cacheHitLogsMode:    FullLogs,
 		cacheMissLogsMode:   FullLogs,
@@ -955,7 +955,7 @@ func (e *execContext) exec(pt *packageTask, deps dag.Set) error {
 	// If we are not caching anything, then we don't need to write logs to disk
 	// be careful about this conditional given the default of cache = true
 	var writer io.Writer
-	if !e.rs.Opts.cache || !pt.taskDefinition.ShouldCache {
+	if e.rs.Opts.stream && (!e.rs.Opts.cache || !pt.taskDefinition.ShouldCache) {
 		writer = os.Stdout
 	} else {
 		// Setup log file
@@ -982,7 +982,10 @@ func (e *execContext) exec(pt *packageTask, deps dag.Set) error {
 			// only write to log file, not to stdout
 			writer = bufWriter
 		} else {
-			writer = io.MultiWriter(os.Stdout, bufWriter)
+			if e.rs.Opts.stream {
+				writer = io.MultiWriter(os.Stdout, bufWriter)
+			}
+			writer = bufWriter
 		}
 	}
 

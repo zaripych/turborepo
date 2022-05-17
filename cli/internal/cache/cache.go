@@ -7,12 +7,10 @@ package cache
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/vercel/turborepo/cli/internal/analytics"
 	"github.com/vercel/turborepo/cli/internal/config"
-	"github.com/vercel/turborepo/cli/internal/ui"
 	"github.com/vercel/turborepo/cli/internal/util"
 	"golang.org/x/sync/errgroup"
 )
@@ -67,7 +65,7 @@ func newSyncCache(config *config.Config, remoteOnly bool, recorder analytics.Rec
 		mplex.caches = append(mplex.caches, newFsCache(config, recorder))
 	}
 	if config.IsLoggedIn() {
-		fmt.Println(ui.Dim("• Remote computation caching enabled (experimental)"))
+		// fmt.Println(ui.Dim("• Remote computation caching enabled (experimental)"))
 		mplex.caches = append(mplex.caches, newHTTPCache(config, recorder))
 	}
 	if len(mplex.caches) == 0 {
