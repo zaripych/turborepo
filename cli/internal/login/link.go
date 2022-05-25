@@ -223,9 +223,11 @@ func (l *link) run() error {
 	}
 
 	fs.EnsureDir(filepath.Join(".turbo", "config.json"))
+	currentConfig, _ := config.ReadRepoConfigFile(l.fsys, l.cwd)
 	err = config.WriteRepoConfigFile(l.fsys, l.cwd, &config.TurborepoConfig{
-		TeamId: teamID,
-		ApiUrl: l.apiURL,
+		TeamId:   teamID,
+		ApiUrl:   l.apiURL,
+		LoginUrl: currentConfig.LoginUrl,
 	})
 	if err != nil {
 		return fmt.Errorf("could not link current directory to team/user.\n%w", err)
