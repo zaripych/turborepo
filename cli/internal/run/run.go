@@ -286,17 +286,27 @@ func (r *run) runOperation(g *completeGraph, rs *runSpec, packageManager *packag
 	}
 
 	if rs.Opts.runOpts.dotGraph != "" {
-		if err := r.generateDotGraph(engine.TaskGraph, r.config.Cwd.Join(rs.Opts.runOpts.dotGraph)); err != nil {
-			return err
+		graphString := string(engine.TaskGraph.Dot(&dag.DotOpts{
+			Verbose:    true,
+			DrawCycles: true,
+		}))
+
+		if rs.Opts.runOpts.dotGraph == "dotGraph.internal" {
+			r.generateDotGraph(graphString, false)
+		} else {
+			err := r.generateGraphVis(graphString, rs.Opts.runOpts.dotGraph)
+			if err != nil {
+				return err
+			}
 		}
-	} else if rs.Opts.runOpts.dryRun {
+	} else if rs.Opts.runOpts.dryRun == "json" || rs.Opts.runOpts.dryRun == "text" {
 		tasksRun, err := r.executeDryRun(engine, g, hashTracker, rs)
 		if err != nil {
 			return err
 		}
 		packagesInScope := rs.FilteredPkgs.UnsafeListOfStrings()
 		sort.Strings(packagesInScope)
-		if rs.Opts.runOpts.dryRunJSON {
+		if rs.Opts.runOpts.dryRun == "json" {
 			dryRun := &struct {
 				Packages []string     `json:"packages"`
 				Tasks    []hashedTask `json:"tasks"`
@@ -410,9 +420,8 @@ type runOpts struct {
 	continueOnError bool
 	passThroughArgs []string
 	// Restrict execution to only the listed task names. Default false
-	only       bool
-	dryRun     bool
-	dryRunJSON bool
+	only   bool
+	dryRun string
 }
 
 var (
@@ -427,9 +436,10 @@ but don't actually run them. Passing --dry=json or
 )
 
 func addRunOpts(opts *runOpts, flags *pflag.FlagSet, aliases map[string]string) {
-	flags.StringVar(&opts.dotGraph, "graph", "", "Generate a Dot graph of the task execution.")
+	flags.StringVar(&opts.dotGraph, "graph", "", "Generate a graph of the task execution.")
 	flags.IntVar(&opts.concurrency, "concurrency", 10, "Limit the concurrency of task execution. Use 1 for serial (i.e. one-at-a-time) execution.")
 	flags.BoolVar(&opts.parallel, "parallel", false, "Execute all tasks in parallel.")
+	flags.StringVar(&opts.dryRun, "dry-run", "", _dryRunHelp)
 	flags.StringVar(&opts.profile, "profile", "", _profileHelp)
 	flags.BoolVar(&opts.continueOnError, "continue", false, _continueHelp)
 	flags.BoolVar(&opts.only, "only", false, "Run only the specified tasks, not their dependencies")
@@ -438,13 +448,8 @@ func addRunOpts(opts *runOpts, flags *pflag.FlagSet, aliases map[string]string) 
 		panic(err)
 	}
 	aliases["dry"] = "dry-run"
-	flags.AddFlag(&pflag.Flag{
-		Name:        "dry-run",
-		Usage:       _dryRunHelp,
-		DefValue:    "",
-		NoOptDefVal: _dryRunNoValue,
-		Value:       &dryRunValue{opts: opts},
-	})
+	flags.Lookup("graph").NoOptDefVal = "dotGraph.internal"
+	flags.Lookup("dry-run").NoOptDefVal = "text"
 }
 
 var _persistentFlags = []string{
@@ -473,54 +478,6 @@ func noopPersistentOptsDuringMigration(flags *pflag.FlagSet) {
 			panic(err)
 		}
 	}
-}
-
-const (
-	_dryRunText      = "dry run"
-	_dryRunJSONText  = "json"
-	_dryRunJSONValue = "json"
-	_dryRunNoValue   = "text|json"
-	_dryRunTextValue = "text"
-)
-
-// dryRunValue implements a flag that can be treated as a boolean (--dry-run)
-// or a string (--dry-run=json).
-type dryRunValue struct {
-	opts *runOpts
-}
-
-var _ pflag.Value = &dryRunValue{}
-
-func (d *dryRunValue) String() string {
-	if d.opts.dryRunJSON {
-		return _dryRunJSONText
-	} else if d.opts.dryRun {
-		return _dryRunText
-	}
-	return ""
-}
-
-func (d *dryRunValue) Set(value string) error {
-	if value == _dryRunJSONValue {
-		d.opts.dryRun = true
-		d.opts.dryRunJSON = true
-	} else if value == _dryRunNoValue {
-		// this case matches the NoOptDefValue, which is used when the flag
-		// is passed, but does not have a value (i.e. boolean flag)
-		d.opts.dryRun = true
-	} else if value == _dryRunTextValue {
-		// "text" is equivalent to just setting the boolean flag
-		d.opts.dryRun = true
-	} else {
-		return fmt.Errorf("invalid dry-run mode: %v", value)
-	}
-	return nil
-}
-
-// Type implements Value.Type, and in this case is used to
-// show the alias in the usage test.
-func (d *dryRunValue) Type() string {
-	return "/ dry "
 }
 
 func getDefaultOptions(config *config.Config) *Opts {
@@ -556,11 +513,6 @@ func (r *run) logWarning(prefix string, err error) {
 	}
 
 	r.ui.Error(fmt.Sprintf("%s%s%s", ui.WARNING_PREFIX, prefix, color.YellowString(" %v", err)))
-}
-
-func hasGraphViz() bool {
-	err := exec.Command("dot", "-v").Run()
-	return err == nil
 }
 
 func (r *run) executeTasks(g *completeGraph, rs *runSpec, engine *core.Scheduler, packageManager *packagemanager.PackageManager, hashes *taskhash.Tracker, startAt time.Time) error {
@@ -893,12 +845,24 @@ func (e *execContext) exec(pt *nodes.PackageTask, deps dag.Set) error {
 	return nil
 }
 
-func (r *run) generateDotGraph(taskGraph *dag.AcyclicGraph, outputFilename fs.AbsolutePath) error {
-	graphString := string(taskGraph.Dot(&dag.DotOpts{
-		Verbose:    true,
-		DrawCycles: true,
-	}))
+func (r *run) generateDotGraph(graphString string, graphVizWarn bool) {
+	r.ui.Output("")
+	// only warn about using graphviz if an output file was specified
+	if graphVizWarn {
+		r.ui.Warn(color.New(color.FgYellow, color.Bold, color.ReverseVideo).Sprint(" WARNING ") + color.YellowString(" `turbo` uses Graphviz to generate an image of your\ngraph, but Graphviz isn't installed on this machine.\n\nYou can download Graphviz from https://graphviz.org/download.\n\nIn the meantime, you can use this string output with an\nonline Dot graph viewer."))
+	}
+	r.ui.Output("")
+	r.ui.Output(graphString)
+}
+
+func (r *run) generateGraphVis(graphString string, outputName string) error {
+	outputFilename := r.config.Cwd.Join(outputName)
 	ext := outputFilename.Ext()
+	if ext == "" {
+		ext = ".jpg"
+		outputFilename = r.config.Cwd.Join(outputName + ext)
+	}
+
 	if ext == ".html" {
 		f, err := outputFilename.Create()
 		if err != nil {
@@ -929,7 +893,8 @@ func (r *run) generateDotGraph(taskGraph *dag.AcyclicGraph, outputFilename fs.Ab
 		}
 		return nil
 	}
-	hasDot := hasGraphViz()
+	hasDot := util.HasGraphViz()
+
 	if hasDot {
 		dotArgs := []string{"-T" + ext[1:], "-o", outputFilename.ToString()}
 		cmd := exec.Command("dot", dotArgs...)
@@ -941,10 +906,7 @@ func (r *run) generateDotGraph(taskGraph *dag.AcyclicGraph, outputFilename fs.Ab
 			r.ui.Output(fmt.Sprintf("✔ Generated task graph in %s", ui.Bold(outputFilename.ToString())))
 		}
 	} else {
-		r.ui.Output("")
-		r.ui.Warn(color.New(color.FgYellow, color.Bold, color.ReverseVideo).Sprint(" WARNING ") + color.YellowString(" `turbo` uses Graphviz to generate an image of your\ngraph, but Graphviz isn't installed on this machine.\n\nYou can download Graphviz from https://graphviz.org/download.\n\nIn the meantime, you can use this string output with an\nonline Dot graph viewer."))
-		r.ui.Output("")
-		r.ui.Output(graphString)
+		r.generateDotGraph(graphString, true)
 	}
 	return nil
 }
