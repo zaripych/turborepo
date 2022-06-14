@@ -75,13 +75,34 @@ func safeCompileIgnoreFile(filepath string) (*gitignore.GitIgnore, error) {
 	return gitignore.CompileIgnoreLines([]string{}...), nil
 }
 
+// Convert inputs from task config to positive and negative globs
+// where negative globs are just inputs starting with '!', with
+// the '!' character being removed during the process
+func splitInputs(specInputs []string) ([]string, []string) {
+	inputs := []string{}
+	excludes := []string{}
+
+	for _, v := range specInputs {
+		if strings.HasPrefix(v, "!") {
+			excludes = append(excludes, strings.TrimPrefix(v, "!"))
+		} else {
+			inputs = append(inputs, v)
+		}
+	}
+
+	return inputs, excludes
+}
+
 func (pfs *packageFileSpec) hash(pkg *fs.PackageJSON, repoRoot fs.AbsolutePath) (string, error) {
+	inputs, excludes := splitInputs(pfs.inputs)
+
 	hashObject, pkgDepsErr := fs.GetPackageDeps(repoRoot, &fs.PackageDepsOptions{
-		PackagePath:   pkg.Dir,
-		InputPatterns: pfs.inputs,
+		PackagePath:          pkg.Dir,
+		InputPatterns:        inputs,
+		InputExcludePatterns: excludes,
 	})
 	if pkgDepsErr != nil {
-		manualHashObject, err := manuallyHashPackage(pkg, pfs.inputs, repoRoot)
+		manualHashObject, err := manuallyHashPackage(pkg, inputs, excludes, repoRoot)
 		if err != nil {
 			return "", err
 		}
@@ -94,7 +115,7 @@ func (pfs *packageFileSpec) hash(pkg *fs.PackageJSON, repoRoot fs.AbsolutePath) 
 	return hashOfFiles, nil
 }
 
-func manuallyHashPackage(pkg *fs.PackageJSON, inputs []string, rootPath fs.AbsolutePath) (map[string]string, error) {
+func manuallyHashPackage(pkg *fs.PackageJSON, inputs []string, excludes []string, rootPath fs.AbsolutePath) (map[string]string, error) {
 	hashObject := make(map[string]string)
 	// Instead of implementing all gitignore properly, we hack it. We only respect .gitignore in the root and in
 	// the directory of a package.
@@ -113,12 +134,26 @@ func manuallyHashPackage(pkg *fs.PackageJSON, inputs []string, rootPath fs.Absol
 		includePattern = "{" + strings.Join(inputs, ",") + "}"
 	}
 
+	excludePattern := ""
+	if len(excludes) > 0 {
+		excludePattern = "{" + strings.Join(excludes, ",") + "}"
+	}
+
 	pathPrefix := rootPath.Join(pkg.Dir).ToString()
 	toTrim := filepath.FromSlash(pathPrefix + "/")
 	fs.Walk(pathPrefix, func(name string, isDir bool) error {
 		rootMatch := ignore.MatchesPath(name)
 		otherMatch := ignorePkg.MatchesPath(name)
 		if !rootMatch && !otherMatch {
+			if excludePattern != "" {
+				ignoreMatch, err := doublestar.PathMatch(excludePattern, name)
+				if err != nil {
+					return err
+				}
+				if ignoreMatch {
+					return nil
+				}
+			}
 			if !isDir {
 				if includePattern != "" {
 					val, err := doublestar.PathMatch(includePattern, name)

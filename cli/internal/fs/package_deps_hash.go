@@ -28,6 +28,8 @@ type PackageDepsOptions struct {
 	PackagePath string
 
 	InputPatterns []string
+
+	InputExcludePatterns []string
 }
 
 // GetPackageDeps Builds an object containing git hashes for the files under the specified `packagePath` folder.
@@ -35,16 +37,20 @@ func GetPackageDeps(repoRoot AbsolutePath, p *PackageDepsOptions) (map[string]st
 	// Add all the checked in hashes.
 	// TODO(gsoltis): are these platform-dependent paths?
 	var result map[string]string
-	if len(p.InputPatterns) == 0 {
+	patterns := p.InputPatterns
+	for _, v := range p.InputExcludePatterns {
+		patterns = append(patterns, ":!:"+v)
+	}
+	if len(patterns) == 0 {
 		gitLsOutput, err := gitLsTree(p.PackagePath)
 		if err != nil {
 			return nil, fmt.Errorf("could not get git hashes for files in package %s: %w", p.PackagePath, err)
 		}
 		result = parseGitLsTree(gitLsOutput)
 	} else {
-		gitLsOutput, err := gitLsFiles(repoRoot.Join(p.PackagePath), p.InputPatterns)
+		gitLsOutput, err := gitLsFiles(repoRoot.Join(p.PackagePath), patterns)
 		if err != nil {
-			return nil, fmt.Errorf("could not get git hashes for file patterns %v in package %s: %w", p.InputPatterns, p.PackagePath, err)
+			return nil, fmt.Errorf("could not get git hashes for file patterns %v in package %s: %w", patterns, p.PackagePath, err)
 		}
 		parsedLines, err := parseGitLsFiles(gitLsOutput)
 		if err != nil {
@@ -54,7 +60,7 @@ func GetPackageDeps(repoRoot AbsolutePath, p *PackageDepsOptions) (map[string]st
 	}
 
 	// Update the checked in hashes with the current repo status
-	gitStatusOutput, err := gitStatus(repoRoot.Join(p.PackagePath), p.InputPatterns)
+	gitStatusOutput, err := gitStatus(repoRoot.Join(p.PackagePath), patterns)
 	if err != nil {
 		return nil, err
 	}
